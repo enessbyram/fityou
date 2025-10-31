@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
 import '../db/database_helper.dart';
 import '../models/user_model.dart';
+import '../main.dart';
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -42,23 +43,31 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
     if (height == null || weight == null) return;
 
-    final user = UserModel(
-      id: 1,
-      height: height,
-      weight: weight,
-      birthDate: _selectedBirthDate!,
-    );
+    try {
+      final user = UserModel(
+        id: 1,
+        height: height,
+        weight: weight,
+        birthDate: _selectedBirthDate!,
+      );
 
-    await DatabaseHelper.instance.insertUser(user.toMap());
+      await DatabaseHelper.instance.insertUser(user.toMap());
 
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('isFirstTime', false);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('isFirstTime', false);
 
-    // Ana ekrana geçiş
-    if (!mounted) return;
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => _GoToHomePlaceholder()),
-    );
+      // Ana ekrana geçiş
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const HomeWrapper()),
+      );
+    } catch (e) {
+      debugPrint("Error saving user: $e");
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Bilgiler kaydedilirken hata oluştu')),
+      );
+    }
   }
 
   @override
@@ -116,36 +125,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           ),
         ),
       ),
-    );
-  }
-}
-
-/// Placeholder to trigger HomeWrapper in main.dart
-class _GoToHomePlaceholder extends StatefulWidget {
-  const _GoToHomePlaceholder();
-
-  @override
-  State<_GoToHomePlaceholder> createState() => _GoToHomePlaceholderState();
-}
-
-class _GoToHomePlaceholderState extends State<_GoToHomePlaceholder> {
-  @override
-  void initState() {
-    super.initState();
-    // Post frame callback ile context güvenli kullanımı
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await Future.delayed(const Duration(milliseconds: 200));
-      if (!mounted) return;
-      if (Navigator.canPop(context)) {
-        Navigator.pop(context);
-      }
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(child: CircularProgressIndicator()),
     );
   }
 }

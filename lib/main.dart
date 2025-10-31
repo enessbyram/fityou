@@ -21,8 +21,25 @@ class FitYouApp extends StatelessWidget {
   const FitYouApp({super.key});
 
   Future<bool> _checkFirstTime() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool('isFirstTime') ?? true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final isFirstTime = prefs.getBool('isFirstTime') ?? true;
+      
+      // If SharedPreferences says it's not first time, check if user data exists
+      if (!isFirstTime) {
+        final userData = await DatabaseHelper.instance.getUser();
+        if (userData == null) {
+          // User data doesn't exist, reset to first time
+          await prefs.setBool('isFirstTime', true);
+          return true;
+        }
+      }
+      
+      return isFirstTime;
+    } catch (e) {
+      debugPrint("Error checking first time: $e");
+      return true; // Default to onboarding if there's an error
+    }
   }
 
   @override
@@ -35,7 +52,18 @@ class FitYouApp extends StatelessWidget {
         future: _checkFirstTime(),
         builder: (context, snapshot) {
           if (!snapshot.hasData) {
-            return const Scaffold(body: Center(child: CircularProgressIndicator()));
+            return const Scaffold(
+              body: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    CircularProgressIndicator(),
+                    SizedBox(height: 16),
+                    Text('Başlatılıyor...'),
+                  ],
+                ),
+              ),
+            );
           }
           return snapshot.data! ? const OnboardingScreen() : const HomeWrapper();
         },
@@ -58,6 +86,7 @@ class _HomeWrapperState extends State<HomeWrapper> {
   int _todayWaterMl = 0;
   StreamSubscription<StepCount>? _stepCountStream;
   int _initialStepCount = -1;
+  bool _isLoading = true;
   final FlutterLocalNotificationsPlugin _flutterLocalNotificationsPlugin =
       FlutterLocalNotificationsPlugin();
 
@@ -66,7 +95,10 @@ class _HomeWrapperState extends State<HomeWrapper> {
     super.initState();
     _initNotifications();
     _loadAll();
-    _startPedometer();
+    // Delay pedometer start to not block the initial loading
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (mounted) _startPedometer();
+    });
   }
 
   @override
@@ -97,16 +129,26 @@ class _HomeWrapperState extends State<HomeWrapper> {
   void _startPedometer() {
     try {
       _stepCountStream = Pedometer.stepCountStream.listen((event) async {
-        final steps = event.steps;
-        if (_initialStepCount == -1) {
-          _initialStepCount = steps;
+        try {
+          final steps = event.steps;
+          if (_initialStepCount == -1) {
+            _initialStepCount = steps;
+          }
+          final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+          final counted = steps - _initialStepCount;
+          final safeCounted = counted < 0 ? steps : counted;
+          _todaySteps = safeCounted;
+          
+          // Run database operation in background to avoid blocking UI
+          DatabaseHelper.instance.insertOrUpdateSteps(today, _todaySteps).catchError((e) {
+            debugPrint("Error updating steps: $e");
+            return 0; // Return default value for error case
+          });
+          
+          if (mounted) setState(() {});
+        } catch (e) {
+          debugPrint("Error processing steps: $e");
         }
-        final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
-        final counted = steps - _initialStepCount;
-        final safeCounted = counted < 0 ? steps : counted;
-        _todaySteps = safeCounted;
-        await DatabaseHelper.instance.insertOrUpdateSteps(today, _todaySteps);
-        if (mounted) setState(() {});
       }, onError: (e) {
         debugPrint("Pedometer error: $e");
       });
@@ -116,14 +158,24 @@ class _HomeWrapperState extends State<HomeWrapper> {
   }
 
   Future<void> _loadAll() async {
-    final userMap = await DatabaseHelper.instance.getUser();
-    if (userMap != null) _user = UserModel.fromMap(userMap);
-    final goalMap = await DatabaseHelper.instance.getGoal();
-    if (goalMap != null) _goal = GoalModel.fromMap(goalMap);
-    final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
-    _todaySteps = await DatabaseHelper.instance.getStepsByDate(today);
-    _todayWaterMl = await DatabaseHelper.instance.getWaterByDate(today);
-    if (mounted) setState(() {});
+    try {
+      setState(() => _isLoading = true);
+      
+      final userMap = await DatabaseHelper.instance.getUser();
+      if (userMap != null) _user = UserModel.fromMap(userMap);
+      
+      final goalMap = await DatabaseHelper.instance.getGoal();
+      if (goalMap != null) _goal = GoalModel.fromMap(goalMap);
+      
+      final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+      _todaySteps = await DatabaseHelper.instance.getStepsByDate(today);
+      _todayWaterMl = await DatabaseHelper.instance.getWaterByDate(today);
+      
+      if (mounted) setState(() => _isLoading = false);
+    } catch (e) {
+      debugPrint("Error loading data: $e");
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   double _calculateWaterNeed(double weightKg) => weightKg * 0.033;
@@ -148,18 +200,33 @@ class _HomeWrapperState extends State<HomeWrapper> {
   }
 
   Future<void> _addWater(int ml) async {
-    final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
-    await DatabaseHelper.instance.insertWater(today, ml);
-    _todayWaterMl = await DatabaseHelper.instance.getWaterByDate(today);
-    setState(() {});
+    try {
+      final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+      await DatabaseHelper.instance.insertWater(today, ml);
+      _todayWaterMl = await DatabaseHelper.instance.getWaterByDate(today);
+      setState(() {});
+    } catch (e) {
+      debugPrint("Error adding water: $e");
+    }
   }
 
   Future<void> _refresh() async => _loadAll();
 
   @override
   Widget build(BuildContext context) {
-    if (_user == null) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    if (_isLoading || _user == null) {
+      return const Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Yükleniyor...'),
+            ],
+          ),
+        ),
+      );
     }
 
     final age = _calculateAge(_user!.birthDate);

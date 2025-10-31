@@ -11,9 +11,17 @@ pluginManagement {
     includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
 
     repositories {
-        google()
+        google {
+            content {
+                includeGroupByRegex("com\\.android.*")
+                includeGroupByRegex("com\\.google.*")
+                includeGroupByRegex("androidx.*")
+            }
+        }
         mavenCentral()
         gradlePluginPortal()
+        maven("https://repo1.maven.org/maven2/")
+        maven("https://dl.google.com/dl/android/maven2/")
     }
 }
 
